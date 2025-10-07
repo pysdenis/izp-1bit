@@ -1,0 +1,20 @@
+# JetBrains/CLion
+.idea/
+cmake-build*/
+# Build artefakty
+build/
+out/
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+# CMake generované
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+# OS drobnosti
+.DS_Store
+Thumbs.db
