@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 4.0)
-project(druheCviko C)
+project(cv02 C)
 
 set(CMAKE_C_STANDARD 11)
 
-add_executable(druheCviko main.c)
+add_executable(cv02 main.c)
