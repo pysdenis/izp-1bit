@@ -136,12 +136,16 @@ void guardLineLengthOrDie(char *buf) {
   size_t len = strLen(buf);
   int hasNewline = 0;
   for (size_t i = 0; buf[i] != '\0'; i++) {
-      if (buf[i] == '\n') { hasNewline = 1; break; }
+    if (buf[i] == '\n') {
+      hasNewline = 1;
+      break;
+    }
   }
   if (!hasNewline && len == LINE_BUFFER_SIZE - 1) {
-      int ch;
-      while ((ch = getchar()) != '\n' && ch != EOF) { /* discard */ }
-      printErrorAndExit("input line too long", 2);
+    int ch;
+    while ((ch = getchar()) != '\n' && ch != EOF) { /* discard */
+    }
+    printErrorAndExit("input line too long", 2);
   }
 }
 
@@ -156,9 +160,7 @@ void initResult(Result *r) {
 }
 
 /** Note the character that can follow the prefix. */
-void markNextChar(Result *r, unsigned char c) {
-  r->nextChars[c] = 1;
-}
+void markNextChar(Result *r, unsigned char c) { r->nextChars[c] = 1; }
 
 /** Save the only matching line (uppercased). */
 void saveSingleMatch(Result *r, const char *upperLine) {
