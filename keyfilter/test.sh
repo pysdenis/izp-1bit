@@ -29,7 +29,7 @@ run_test()
     local stdinred="$1"
     local stdoutref="$2"
     shift 2
-    timeout 0.5 ./keyfilter "$@" <$stdinred >test-stdout.tmp 2>&1
+    gtimeout 0.5 ./keyfilter "$@" <$stdinred >test-stdout.tmp 2>&1
     diff -iBw $stdoutref test-stdout.tmp >/dev/null
     result=$?
     rm -f test-stdout.tmp
