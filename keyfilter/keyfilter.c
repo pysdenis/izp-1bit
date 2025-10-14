@@ -1,282 +1,291 @@
 // keyfilter.c
-// Program: Emulace povolování kláves na virtuální klávesnici navigace
-// Překlad: gcc -std=c11 -Wall -Wextra -Werror keyfilter.c -o keyfilter
-// Vstup: seznam adres po řádcích ze stdin
-// Výstup: VŽDY na stderr (Found / Enable / Not found)
-// Pozn.: case-insensitive porovnávání; dynamické čtení, dlouhé řádky, ošetřené chyby
+// Project 1 – Text processing (virtual keyboard)
+// Build: gcc -std=c11 -Wall -Wextra -Werror keyfilter.c -o keyfilter
+//
+// Program reads a list of addresses from stdin (one per line).
+// It prints which keys are enabled for a given prefix (argv[1]).
+// Case-insensitive (ASCII). No dynamic memory, no external files.
+// Output (exactly):
+//   Found: S
+//   Enable: CHARS
+//   Not found
+//
+// Special case: if the prefix is an exact address AND a prefix of another,
+// print two lines: "Found: PREFIX" and "Enable: CHARS".
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
-#include <ctype.h>
-#include <errno.h>
 
-#define INITIAL_CAP 64
-#define LINE_CHUNK 128
+#define LINE_BUFFER_SIZE 2048  // program knows its limit; >= 100 as required
+#define TRUE 1
+#define FALSE 0
+typedef int bool;
 
+/* ----------------------------- Types ------------------------------ */
+
+/** Aggregated result gathered while reading stdin. */
 typedef struct {
-    char **items;
-    size_t size;
-    size_t cap;
-} StrVec;
+  unsigned long matchCount;           /* number of matching addresses   */
+  bool exactMatch;                    /* exact == prefix exists         */
+  char nextChars[256];                /* set of next allowed characters */
+  char singleMatch[LINE_BUFFER_SIZE]; /* the only match (if 1)     */
+} Result;
 
-static void die(const char *msg) {
-    // Chybová hlášení mají být anglicky
-    if (msg) fprintf(stderr, "Error: %s\n", msg);
-    else     fprintf(stderr, "Error\n");
-    exit(2);
+/* ----------------------------- Errors ------------------------------ */
+
+/**
+ * Print error to stderr and exit with non-zero code.
+ * @param message Error message to print.
+ * @param code Exit code (non-zero).
+ */
+void printErrorAndExit(const char *message, int code) {
+  fprintf(stderr, "Error: %s\n", message);
+  exit(code);
 }
 
-static void *xrealloc(void *ptr, size_t newsize) {
-    void *p = realloc(ptr, newsize);
-    if (!p) die("Out of memory");
-    return p;
+/* ------------------------- String helpers ------------------------- */
+
+/**
+ * Calculate length of a string (like strlen).
+ * @param str Input string.
+ * @return Length of the string.
+ */
+size_t strLen(const char *str) {
+  const char *s = str;
+  while (*s) s++;
+  return s - str;
 }
 
-static char *xstrdup(const char *s) {
-    size_t n = strlen(s) + 1;
-    char *p = (char *)malloc(n);
-    if (!p) die("Out of memory");
-    memcpy(p, s, n);
-    return p;
+/**
+ * Compare two strings (like strcmp), case-insensitive (ASCII only).
+ * @param s1 First string.
+ * @param s2 Second string.
+ * @return <0 if s1<s2, 0 if s1==s2, >0 if s1>s2
+ */
+int strCmp(const char *s1, const char *s2) {
+  while (*s1 && *s2) {
+    char c1 = (*s1 >= 'A' && *s1 <= 'Z') ? (*s1 + 32) : *s1;
+    char c2 = (*s2 >= 'A' && *s2 <= 'Z') ? (*s2 + 32) : *s2;
+    if (c1 != c2) return c1 - c2;
+    s1++;
+    s2++;
+  }
+  return *s1 - *s2;
 }
 
-static void vec_init(StrVec *v) {
-    v->cap = INITIAL_CAP;
-    v->size = 0;
-    v->items = (char **)malloc(v->cap * sizeof(char *));
-    if (!v->items) die("Out of memory");
+/**
+ * Copy string from src to dest (like strcpy).
+ * @param dest Destination string (must be large enough).
+ * @param src Source string.
+ */
+void strCpy(char *dest, const char *src) {
+  while (*src) {
+    *dest++ = *src++;
+  }
+  *dest = '\0';
 }
 
-static void vec_push(StrVec *v, const char *s) {
-    if (v->size == v->cap) {
-        v->cap *= 2;
-        v->items = (char **)xrealloc(v->items, v->cap * sizeof(char *));
+/**
+ * Converts all characters in the string to upper case (ASCII only).
+ * @param str Input string to convert (modified in place).
+ */
+void toUpperASCII(char *str) {
+  while (*str) {
+    if (*str >= 'a' && *str <= 'z') {
+      *str = *str - 32;
     }
-    v->items[v->size++] = xstrdup(s);
+    str++;
+  }
 }
 
-static void vec_free(StrVec *v) {
-    for (size_t i = 0; i < v->size; ++i) free(v->items[i]);
-    free(v->items);
+/**
+ * Trim trailing newline and carriage return characters from the end of the
+ * string.
+ * @param s Input string to trim (modified in place).
+ */
+void trimLineEnd(char *s) {
+  size_t n = strLen(s);
+  while (n > 0 && (s[n - 1] == '\n' || s[n - 1] == '\r')) {
+    s[n - 1] = '\0';
+    n--;
+  }
 }
 
-// Trim newline (\n, \r\n) at end
-static void rstrip_newline(char *s) {
-    size_t n = strlen(s);
-    while (n > 0 && (s[n-1] == '\n' || s[n-1] == '\r')) {
-        s[--n] = '\0';
+/**
+ * Check if text starts with the given prefix.
+ * @param text Input text.
+ * @param prefix Prefix to check.
+ * @return TRUE if text starts with prefix, FALSE otherwise.
+ */
+bool startsWith(const char *text, const char *prefix) {
+  size_t i = 0;
+  while (prefix[i] != '\0') {
+    if (text[i] == '\0' || text[i] != prefix[i]) return FALSE;
+    i++;
+  }
+  return TRUE;
+}
+
+/* --------------------- Input safety / limits ---------------------- */
+
+/**
+ * If fgets filled the buffer and there is no '\n', the input line is longer
+ * than we support. Consume the rest of the line and fail.
+ */
+void guardLineLengthOrDie(char *buf) {
+  size_t len = strLen(buf);
+  int hasNewline = 0;
+  for (size_t i = 0; buf[i] != '\0'; i++) {
+      if (buf[i] == '\n') { hasNewline = 1; break; }
+  }
+  if (!hasNewline && len == LINE_BUFFER_SIZE - 1) {
+      int ch;
+      while ((ch = getchar()) != '\n' && ch != EOF) { /* discard */ }
+      printErrorAndExit("input line too long", 2);
+  }
+}
+
+/* ------------------------- Result helpers ------------------------- */
+
+/** Initialize Result structure with zero values. */
+void initResult(Result *r) {
+  r->matchCount = 0;
+  r->exactMatch = FALSE;
+  for (int i = 0; i < 256; i++) r->nextChars[i] = 0;
+  r->singleMatch[0] = '\0';
+}
+
+/** Note the character that can follow the prefix. */
+void markNextChar(Result *r, unsigned char c) {
+  r->nextChars[c] = 1;
+}
+
+/** Save the only matching line (uppercased). */
+void saveSingleMatch(Result *r, const char *upperLine) {
+  strCpy(r->singleMatch, upperLine);
+}
+
+/** Update aggregated result for one matching line. */
+void updateAggregates(Result *r, const char *upperLine, size_t lineLen,
+                      size_t prefixLen) {
+  r->matchCount++;
+  if (lineLen == prefixLen) {
+    r->exactMatch = TRUE;
+  } else if (lineLen > prefixLen) {
+    markNextChar(r, (unsigned char)upperLine[prefixLen]);
+  }
+  if (r->matchCount == 1) {
+    saveSingleMatch(r, upperLine);
+  }
+}
+
+/** Build enabled characters string from presence table. */
+void buildEnableChars(const char present[256], char output[257]) {
+  size_t k = 0;
+  for (int i = 0; i < 256; i++)
+    if (present[i]) output[k++] = (char)i;
+  output[k] = '\0';
+}
+
+bool readLine(char *buffer, size_t maxLen) {
+  int ch;
+  size_t i = 0;
+  int tooLong = FALSE;
+
+  while ((ch = getchar()) != EOF) {
+    if (ch == '\r') continue;  // skip CR in Windows endings
+    if (ch == '\n') break;     // end of line
+
+    if (i + 1 < maxLen) {
+      buffer[i++] = (char)ch;
+    } else {
+      tooLong = TRUE;  // mark too long
     }
-}
+  }
 
-// Case-insensitive startswith
-static int ci_starts_with(const char *str, const char *prefix) {
-    for (; *prefix; ++prefix, ++str) {
-        unsigned char a = (unsigned char)*str;
-        unsigned char b = (unsigned char)*prefix;
-        if (a == '\0') return 0;
-        if (tolower(a) != tolower(b)) return 0;
+  buffer[i] = '\0';
+
+  if (tooLong) {
+    // consume rest of line until newline/EOF
+    while (ch != '\n' && ch != EOF) {
+      ch = getchar();
     }
-    return 1;
+    printErrorAndExit("input line too long", 2);
+  }
+
+  // If EOF reached and no characters read -> no more lines
+  if (ch == EOF && i == 0) return FALSE;
+
+  return TRUE;
 }
 
-// Case-insensitive equality
-static int ci_equals(const char *a, const char *b) {
-    while (*a && *b) {
-        if (tolower((unsigned char)*a) != tolower((unsigned char)*b)) return 0;
-        ++a; ++b;
-    }
-    return *a == '\0' && *b == '\0';
+/* -------------------------- Core logic ---------------------------- */
+
+/**
+ * Process stdin: read lines, normalize to uppercase, check prefix,
+ * and accumulate information into Result.
+ */
+void processInput(const char *prefixUpper, size_t prefixLen, Result *res) {
+  char line[LINE_BUFFER_SIZE];
+  char up[LINE_BUFFER_SIZE];
+
+  while (readLine(line, LINE_BUFFER_SIZE)) {
+    if (line[0] == '\0') continue;  // skip empty lines
+
+    strCpy(up, line);
+    toUpperASCII(up);
+
+    if (!startsWith(up, prefixUpper)) continue;
+
+    updateAggregates(res, up, strLen(up), prefixLen);
+  }
 }
 
-// Uppercase copy (ASCII), returns newly allocated
-static char *to_upper_copy(const char *s) {
-    size_t n = strlen(s);
-    char *o = (char *)malloc(n + 1);
-    if (!o) die("Out of memory");
-    for (size_t i = 0; i < n; ++i) {
-        o[i] = (char)toupper((unsigned char)s[i]);
-    }
-    o[n] = '\0';
-    return o;
-}
-
-// Read one line of arbitrary length (no POSIX getline dependency)
-static char *read_line(FILE *f) {
-    char *buf = NULL;
-    size_t used = 0;
-    size_t cap = 0;
-
-    for (;;) {
-        if (used + 1 >= cap) {
-            size_t newcap = cap ? cap + LINE_CHUNK : LINE_CHUNK;
-            char *nbuf = (char *)realloc(buf, newcap);
-            if (!nbuf) {
-                free(buf);
-                die("Out of memory");
-            }
-            buf = nbuf;
-            cap = newcap;
-        }
-
-        int c = fgetc(f);
-        if (c == EOF) {
-            if (ferror(f)) {
-                free(buf);
-                die("Input error");
-            }
-            if (used == 0) { free(buf); return NULL; } // no more lines
-            break; // return last line without newline
-        }
-
-        buf[used++] = (char)c;
-        if (c == '\n') break;
-    }
-    buf[used] = '\0';
-    return buf;
-}
-
-// qsort comparator for chars
-static int cmp_char(const void *a, const void *b) {
-    unsigned char ca = *(const unsigned char *)a;
-    unsigned char cb = *(const unsigned char *)b;
-    if (ca < cb) return -1;
-    if (ca > cb) return 1;
+/**
+ * Print the final output exactly as required.
+ * Returns 0 (program exit code).
+ */
+int printFinalOutput(const Result *r, const char *prefixUpper) {
+  if (r->matchCount == 0) {
+    printf("Not found\n");
     return 0;
+  }
+  if (r->matchCount == 1) {
+    printf("Found: %s\n", r->singleMatch);
+    return 0;
+  }
+  if (r->exactMatch) {
+    printf("Found: %s\n", prefixUpper);
+  }
+  char enabled[257];
+  buildEnableChars(r->nextChars, enabled);
+  printf("Enable: %s\n", enabled);
+  return 0;
 }
 
-int main(int argc, char **argv) {
-    // Read prefix argument (may be empty)
-    const char *prefix_in = (argc >= 2) ? argv[1] : "";
-    char *prefix_upper = to_upper_copy(prefix_in);
-    size_t prefix_len = strlen(prefix_in);
+/* ----------------------------- Main ------------------------------- */
 
-    // Read addresses from stdin
-    StrVec addresses;
-    vec_init(&addresses);
+int main(int argc, char *argv[]) {
+  /* Check launch syntax: at most one optional PREFIX argument. */
+  if (argc > 2) {
+    printErrorAndExit("too many arguments. Usage: ./keyfilter [PREFIX]",
+                      EXIT_FAILURE);
+  }
 
-    for (;;) {
-        char *line = read_line(stdin);
-        if (!line) break;
-        rstrip_newline(line);
+  char prefixUpper[LINE_BUFFER_SIZE] = "";
+  if (argc == 2 && argv[1] != NULL) {
+    strCpy(prefixUpper, argv[1]);
+  }
 
-        // Ignore completely empty lines
-        // (Optional: if you want to keep them, comment the following block)
-        if (line[0] == '\0') {
-            free(line);
-            continue;
-        }
+  toUpperASCII(prefixUpper);
+  const size_t prefixLen = strLen(prefixUpper);
 
-        vec_push(&addresses, line);
-        free(line);
-    }
+  Result res;
+  initResult(&res);
 
-    if (addresses.size == 0) {
-        // No data -> treat as unexpected input
-        free(prefix_upper);
-        vec_free(&addresses);
-        die("No addresses on input");
-    }
+  processInput(prefixUpper, prefixLen, &res);
 
-    // Collect matching addresses & track exact matches
-    StrVec matches;
-    vec_init(&matches);
+  printFinalOutput(&res, prefixUpper);
 
-    int have_exact = 0;
-    StrVec exacts;
-    vec_init(&exacts);
-
-    for (size_t i = 0; i < addresses.size; ++i) {
-        const char *addr = addresses.items[i];
-        if (ci_starts_with(addr, prefix_in)) {
-            vec_push(&matches, addr);
-            if (ci_equals(addr, prefix_in)) {
-                have_exact = 1;
-                vec_push(&exacts, addr);
-            }
-        }
-    }
-
-    if (matches.size == 0) {
-        fprintf(stderr, "Not found\n");
-        free(prefix_upper);
-        vec_free(&matches);
-        vec_free(&exacts);
-        vec_free(&addresses);
-        return 0;
-    }
-
-    // If exactly one match and prefix is not equal to it -> Found only
-    if (matches.size == 1 && !ci_equals(matches.items[0], prefix_in)) {
-        char *up = to_upper_copy(matches.items[0]);
-        fprintf(stderr, "Found: %s\n", up);
-        free(up);
-        free(prefix_upper);
-        vec_free(&matches);
-        vec_free(&exacts);
-        vec_free(&addresses);
-        return 0;
-    }
-
-    // If at least one exact match, print Found for the (first) exact match (spec ukazuje jediný řádek)
-    if (have_exact) {
-        // Vytiskneme Found: pro první exact (případ duplikátů ošetříme jedním výpisem)
-        char *up = to_upper_copy(exacts.items[0]);
-        fprintf(stderr, "Found: %s\n", up);
-        free(up);
-    }
-
-    // We need to compute ENABLE chars from all matches that are STRICTLY longer than prefix
-    // For each such address, take next char at position prefix_len (uppercased)
-    // Create set of unique chars, then sort and print.
-    unsigned char present[256] = {0};
-    size_t count_chars = 0;
-
-    for (size_t i = 0; i < matches.size; ++i) {
-        const char *addr = matches.items[i];
-        size_t alen = strlen(addr);
-        if (alen > prefix_len) {
-            unsigned char ch = (unsigned char)addr[prefix_len];
-            ch = (unsigned char)toupper(ch);
-            if (!present[ch]) {
-                present[ch] = 1;
-                ++count_chars;
-            }
-        }
-    }
-
-    if (count_chars == 0) {
-        // No way to continue typing beyond prefix (all matches equal to prefix)
-        // If we already printed Found (have_exact), nothing else is needed.
-        // Otherwise (theoreticky by nastala shoda bez exactu, ale s nulovým next char) – to nenastane.
-        free(prefix_upper);
-        vec_free(&matches);
-        vec_free(&exacts);
-        vec_free(&addresses);
-        return 0;
-    }
-
-    char *chars = (char *)malloc(count_chars);
-    if (!chars) die("Out of memory");
-
-    size_t idx = 0;
-    for (int c = 0; c < 256; ++c) {
-        if (present[c]) {
-            chars[idx++] = (char)c;
-        }
-    }
-
-    qsort(chars, count_chars, sizeof(char), cmp_char);
-
-    // Print as concatenated string (no spaces)
-    fprintf(stderr, "Enable: ");
-    for (size_t i = 0; i < count_chars; ++i) fputc(chars[i], stderr);
-    fputc('\n', stderr);
-
-    free(chars);
-    free(prefix_upper);
-    vec_free(&matches);
-    vec_free(&exacts);
-    vec_free(&addresses);
-    return 0;
+  return EXIT_SUCCESS;
 }

@@ -7,8 +7,7 @@ export POSIXLY_CORRECT=y
 
 cd $(dirname $0)
 
-die()
-{
+die()       {
     echo "$@" >&2
     exit 1
 }
