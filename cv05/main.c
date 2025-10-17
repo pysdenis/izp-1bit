@@ -1,3 +1,10 @@
+// Usage: program reads measurements from standard input (stdin).
+// Each measurement should be provided as seven whitespace-separated values:
+//   year month day hours minutes seconds temperature
+// Example (file):
+//   2023 6 15 9 30 0 21.5
+// Run with input redirection:
+//   ./main < mereni.txt
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -75,26 +82,13 @@ int getTimeInYearInSeconds(DateTime dateTime) {
   return seconds;
 }
 
-// 1. Vytvořte funkci struct measurement_t load_measurement(), která čte ze
-// stdin jednotlivé položky měření a vrací odpovídající měření.
-Measurement createMeasurement() {
-  Measurement m;
-  printf("Enter year: ");
-  scanf("%d", &m.date.year);
-  printf("Enter month: ");
-  scanf("%d", &m.date.month);
-  printf("Enter day: ");
-  scanf("%d", &m.date.day);
-  printf("Enter hours: ");
-  scanf("%d", &m.DateTime.hours);
-  printf("Enter minutes: ");
-  scanf("%d", &m.DateTime.minutes);
-  printf("Enter seconds: ");
-  scanf("%d", &m.DateTime.seconds);
-  printf("Enter temperature: ");
-  scanf("%f", &m.temperature);
-  m.DateTime.date = m.date;
-  return m;
+int loadMeasurement(Measurement *m) {
+  int fields = scanf("%d %d %d %d %d %d %f", &m->date.year, &m->date.month,
+                     &m->date.day, &m->DateTime.hours, &m->DateTime.minutes,
+                     &m->DateTime.seconds, &m->temperature);
+  if (fields != 7) return 0;
+  m->DateTime.date = m->date;
+  return 1;
 }
 
 void printMeasurement(const Measurement m) {
@@ -113,9 +107,6 @@ int isMeasurementValid(const Measurement m) {
   if (m.DateTime.seconds < 0 || m.DateTime.seconds > 59) return 0;
   return 1;
 }
-
-// Načtěte 5 měření do pole (ve funkci main) a spočítejte:
-// • průměrnou teplotu, maximální teplotu, nejteplejší dopoledne,
 
 int main(int argc, char *argv[]) {
   //   Date date;
@@ -145,7 +136,13 @@ int main(int argc, char *argv[]) {
   //   int totalSeconds = getTimeInYearInSeconds(dateTime);
   //   printf("Total seconds since start of the year: %d\n", totalSeconds);
 
-  Measurement m = createMeasurement();
+  // Read first measurement (if any) from stdin. This allows running
+  // the program with input redirection: ./main < mereni.txt
+  Measurement m;
+  if (!loadMeasurement(&m)) {
+    fprintf(stderr, "No measurement available on stdin.\n");
+    return 1;
+  }
   printMeasurement(m);
 
   if (isMeasurementValid(m)) {
@@ -154,34 +151,74 @@ int main(int argc, char *argv[]) {
     printf("Invalid measurement.\n");
   }
 
+  printf("\n\n\n\n");
+
   Measurement measurements[5];
-  for (int i = 0; i < 5; i++) {
-    printf("Enter measurement %d:\n", i + 1);
-    measurements[i] = createMeasurement();
-    if (!isMeasurementValid(measurements[i])) {
-      printf("Invalid measurement. Please enter a valid measurement.\n");
-      i--;
+  int count = 0;
+  while (count < 5) {
+    Measurement tmp;
+    if (!loadMeasurement(&tmp)) break;
+    if (!isMeasurementValid(tmp)) {
+      fprintf(stderr, "Invalid measurement encountered; skipping.\n");
+      continue;
     }
+    measurements[count++] = tmp;
+  }
+
+  if (count == 0) {
+    fprintf(stderr, "No valid measurements to process.\n");
+    return 1;
   }
 
   float sum = 0;
   float maxTemp = measurements[0].temperature;
-  Measurement hottestMorning = measurements[0];
+  int foundMorning = 0;
+  Measurement hottestMorning;
 
-  for (int i = 0; i < 5; i++) {
+  for (int i = 0; i < count; i++) {
     sum += measurements[i].temperature;
     if (measurements[i].temperature > maxTemp) {
       maxTemp = measurements[i].temperature;
     }
     if (measurements[i].DateTime.hours < 12) {
-      if (measurements[i].temperature > hottestMorning.temperature) {
+      if (!foundMorning ||
+          measurements[i].temperature > hottestMorning.temperature) {
         hottestMorning = measurements[i];
+        foundMorning = 1;
       }
     }
   }
-  printf("Average temperature: %.2f\n", sum / 5);
+  printf("Average temperature: %.2f\n", sum / count);
   printf("Maximum temperature: %.2f\n", maxTemp);
-  printf("Hottest morning: %02d:%02d:%02d\n", hottestMorning.DateTime.hours,
-         hottestMorning.DateTime.minutes, hottestMorning.DateTime.seconds);
+  if (foundMorning) {
+    printf("Hottest morning: %02d:%02d:%02d\n", hottestMorning.DateTime.hours,
+           hottestMorning.DateTime.minutes, hottestMorning.DateTime.seconds);
+  } else {
+    printf("No morning measurements found.\n");
+  }
+
+  int pole2d[4][5];
+
+  for (int i = 0; i < 4; i++) {
+    for (int j = 0; j < 5; j++) {
+      pole2d[i][j] = 5;
+    }
+  }
+
+  FILE *f = fopen("pole.txt", "w");
+
+  if (f == NULL) {
+    fprintf(stderr, "Error opening file for writing.\n");
+    return 1;
+  }
+
+  for (int i = 0; i < 4; i++) {
+    for (int j = 0; j < 5; j++) {
+      fprintf(f, "%d ", pole2d[i][j]);
+    }
+    fprintf(f, "\n");
+  }
+
+  fclose(f);
   return 0;
 }
