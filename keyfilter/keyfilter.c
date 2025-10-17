@@ -4,26 +4,19 @@
 //
 // Program reads a list of addresses from stdin (one per line).
 // It prints which keys are enabled for a given prefix (argv[1]).
-// Case-insensitive (ASCII). No dynamic memory, no external files.
-// Output (exactly):
-//   Found: S
-//   Enable: CHARS
-//   Not found
-//
-// Special case: if the prefix is an exact address AND a prefix of another,
-// print two lines: "Found: PREFIX" and "Enable: CHARS".
 
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
-#define LINE_BUFFER_SIZE 2048  // program knows its limit; >= 100 as required
+#define LINE_BUFFER_SIZE 2048
+
 #define TRUE 1
 #define FALSE 0
 typedef int bool;
 
-/* ----------------------------- Types ------------------------------ */
-
-/** Aggregated result gathered while reading stdin. */
+/** Result while reading stdin. */
 typedef struct {
   unsigned long matchCount;           /* number of matching addresses   */
   bool exactMatch;                    /* exact == prefix exists         */
@@ -31,93 +24,49 @@ typedef struct {
   char singleMatch[LINE_BUFFER_SIZE]; /* the only match (if 1)     */
 } Result;
 
-/* ----------------------------- Errors ------------------------------ */
+/**
+ * Initialize Result structure with zero values.
+ * @param result
+ */
+void initResult(Result* result) {
+  result->matchCount = 0;
+  result->exactMatch = FALSE;
+  for (int i = 0; i < 256; i++) {
+    result->nextChars[i] = 0;
+  };
+  result->singleMatch[0] = '\0';
+}
 
 /**
- * Print error to stderr and exit with non-zero code.
- * @param message Error message to print.
- * @param code Exit code (non-zero).
+ * Print error to stderr and exit with error code.
+ * @param message
+ * @param code
  */
-void printErrorAndExit(const char *message, int code) {
+void printErrorAndExit(const char* message, int code) {
   fprintf(stderr, "Error: %s\n", message);
   exit(code);
 }
 
-/* ------------------------- String helpers ------------------------- */
-
 /**
- * Calculate length of a string (like strlen).
- * @param str Input string.
- * @return Length of the string.
+ * Converts all characters in the string to upper case.
+ * @param string
  */
-size_t strLen(const char *str) {
-  const char *s = str;
-  while (*s) s++;
-  return s - str;
-}
-
-/**
- * Compare two strings (like strcmp), case-insensitive (ASCII only).
- * @param s1 First string.
- * @param s2 Second string.
- * @return <0 if s1<s2, 0 if s1==s2, >0 if s1>s2
- */
-int strCmp(const char *s1, const char *s2) {
-  while (*s1 && *s2) {
-    char c1 = (*s1 >= 'A' && *s1 <= 'Z') ? (*s1 + 32) : *s1;
-    char c2 = (*s2 >= 'A' && *s2 <= 'Z') ? (*s2 + 32) : *s2;
-    if (c1 != c2) return c1 - c2;
-    s1++;
-    s2++;
-  }
-  return *s1 - *s2;
-}
-
-/**
- * Copy string from src to dest (like strcpy).
- * @param dest Destination string (must be large enough).
- * @param src Source string.
- */
-void strCpy(char *dest, const char *src) {
-  while (*src) {
-    *dest++ = *src++;
-  }
-  *dest = '\0';
-}
-
-/**
- * Converts all characters in the string to upper case (ASCII only).
- * @param str Input string to convert (modified in place).
- */
-void toUpperASCII(char *str) {
-  while (*str) {
-    if (*str >= 'a' && *str <= 'z') {
-      *str = *str - 32;
+void toUpperASCII(char* string) {
+  while (*string) {
+    if (*string >= 'a' && *string <= 'z') {
+      *string = *string - 32;
     }
-    str++;
+    string++;
   }
 }
 
 /**
- * Trim trailing newline and carriage return characters from the end of the
- * string.
- * @param s Input string to trim (modified in place).
+ * Check if string starts with the prefix.
+ * @param text
+ * @param prefix
+ * @return TRUE or FALSE
  */
-void trimLineEnd(char *s) {
-  size_t n = strLen(s);
-  while (n > 0 && (s[n - 1] == '\n' || s[n - 1] == '\r')) {
-    s[n - 1] = '\0';
-    n--;
-  }
-}
-
-/**
- * Check if text starts with the given prefix.
- * @param text Input text.
- * @param prefix Prefix to check.
- * @return TRUE if text starts with prefix, FALSE otherwise.
- */
-bool startsWith(const char *text, const char *prefix) {
+bool startsWith(const char* text, const char* prefix) {
   size_t i = 0;
   while (prefix[i] != '\0') {
     if (text[i] == '\0' || text[i] != prefix[i]) return FALSE;
@@ -126,128 +75,95 @@ bool startsWith(const char *text, const char *prefix) {
   return TRUE;
 }
 
-/* --------------------- Input safety / limits ---------------------- */
+/**
+ * Update result for one matching line.
+ * @param result
+ * @param upperLine
+ * @param lineLen
+ * @param prefixLen
+ */
+void updateResult(Result* result, const char* upperLine, size_t lineLen,
+                  size_t prefixLen) {
+  result->matchCount++;
+  if (lineLen == prefixLen) {
+    result->exactMatch = TRUE;
+  } else if (lineLen > prefixLen) {
+    result->nextChars[(unsigned char)upperLine[prefixLen]] = 1;
+  }
+  if (result->matchCount == 1) {
+    strcpy(result->singleMatch, upperLine);
+  }
+}
 
 /**
- * If fgets filled the buffer and there is no '\n', the input line is longer
- * than we support. Consume the rest of the line and fail.
+ * Build enabled characters string from charTable.
+ * @param charTable
+ * @param output Output string to store enabled characters.
  */
-void guardLineLengthOrDie(char *buf) {
-  size_t len = strLen(buf);
-  int hasNewline = 0;
-  for (size_t i = 0; buf[i] != '\0'; i++) {
-    if (buf[i] == '\n') {
-      hasNewline = 1;
-      break;
-    }
-  }
-  if (!hasNewline && len == LINE_BUFFER_SIZE - 1) {
-    int ch;
-    while ((ch = getchar()) != '\n' && ch != EOF) { /* discard */
-    }
-    printErrorAndExit("input line too long", 2);
-  }
-}
-
-/* ------------------------- Result helpers ------------------------- */
-
-/** Initialize Result structure with zero values. */
-void initResult(Result *r) {
-  r->matchCount = 0;
-  r->exactMatch = FALSE;
-  for (int i = 0; i < 256; i++) r->nextChars[i] = 0;
-  r->singleMatch[0] = '\0';
-}
-
-/** Note the character that can follow the prefix. */
-void markNextChar(Result *r, unsigned char c) { r->nextChars[c] = 1; }
-
-/** Save the only matching line (uppercased). */
-void saveSingleMatch(Result *r, const char *upperLine) {
-  strCpy(r->singleMatch, upperLine);
-}
-
-/** Update aggregated result for one matching line. */
-void updateAggregates(Result *r, const char *upperLine, size_t lineLen,
-                      size_t prefixLen) {
-  r->matchCount++;
-  if (lineLen == prefixLen) {
-    r->exactMatch = TRUE;
-  } else if (lineLen > prefixLen) {
-    markNextChar(r, (unsigned char)upperLine[prefixLen]);
-  }
-  if (r->matchCount == 1) {
-    saveSingleMatch(r, upperLine);
-  }
-}
-
-/** Build enabled characters string from presence table. */
-void buildEnableChars(const char present[256], char output[257]) {
+void buildEnableChars(const char charTable[256], char output[257]) {
   size_t k = 0;
   for (int i = 0; i < 256; i++)
-    if (present[i]) output[k++] = (char)i;
+    if (charTable[i]) output[k++] = (char)i;
   output[k] = '\0';
 }
 
-bool readLine(char *buffer, size_t maxLen) {
+/**
+ * Read one line from stdin into buffer.
+ * @param buffer
+ * @param maxLen Maximum length of buffer.
+ * @return TRUE if a line was read, FALSE on EOF before any characters.
+ */
+bool readLine(char* buffer, size_t maxLen) {
   int ch;
   size_t i = 0;
-  int tooLong = FALSE;
 
   while ((ch = getchar()) != EOF) {
-    if (ch == '\r') continue;  // skip CR in Windows endings
-    if (ch == '\n') break;     // end of line
+    if (ch == '\r') continue;
+    if (ch == '\n') break;
 
     if (i + 1 < maxLen) {
       buffer[i++] = (char)ch;
     } else {
-      tooLong = TRUE;  // mark too long
+      printErrorAndExit("input line too long", 2);
     }
   }
 
   buffer[i] = '\0';
 
-  if (tooLong) {
-    // consume rest of line until newline/EOF
-    while (ch != '\n' && ch != EOF) {
-      ch = getchar();
-    }
-    printErrorAndExit("input line too long", 2);
-  }
-
-  // If EOF reached and no characters read -> no more lines
   if (ch == EOF && i == 0) return FALSE;
 
   return TRUE;
 }
 
-/* -------------------------- Core logic ---------------------------- */
-
 /**
- * Process stdin: read lines, normalize to uppercase, check prefix,
- * and accumulate information into Result.
+ * Processes input lines.
+ * @param prefixUpper
+ * @param prefixLen
+ * @param res
  */
-void processInput(const char *prefixUpper, size_t prefixLen, Result *res) {
+void processInput(const char* prefixUpper, size_t prefixLen, Result* res) {
   char line[LINE_BUFFER_SIZE];
   char up[LINE_BUFFER_SIZE];
 
   while (readLine(line, LINE_BUFFER_SIZE)) {
     if (line[0] == '\0') continue;  // skip empty lines
 
-    strCpy(up, line);
+    strcpy(up, line);
     toUpperASCII(up);
 
     if (!startsWith(up, prefixUpper)) continue;
 
-    updateAggregates(res, up, strLen(up), prefixLen);
+    updateResult(res, up, strlen(up), prefixLen);
   }
 }
 
 /**
- * Print the final output exactly as required.
- * Returns 0 (program exit code).
+ * Print the final from the result.
+ * @param r
+ * @param prefixUpper
+ * @return 0 on success.
  */
-int printFinalOutput(const Result *r, const char *prefixUpper) {
+int showResult(const Result* r, const char* prefixUpper) {
   if (r->matchCount == 0) {
     printf("Not found\n");
     return 0;
@@ -265,10 +181,7 @@ int printFinalOutput(const Result *r, const char *prefixUpper) {
   return 0;
 }
 
-/* ----------------------------- Main ------------------------------- */
-
-int main(int argc, char *argv[]) {
-  /* Check launch syntax: at most one optional PREFIX argument. */
+int main(int argc, char* argv[]) {
   if (argc > 2) {
     printErrorAndExit("too many arguments. Usage: ./keyfilter [PREFIX]",
                       EXIT_FAILURE);
@@ -276,18 +189,18 @@ int main(int argc, char *argv[]) {
 
   char prefixUpper[LINE_BUFFER_SIZE] = "";
   if (argc == 2 && argv[1] != NULL) {
-    strCpy(prefixUpper, argv[1]);
+    strcpy(prefixUpper, argv[1]);
   }
 
   toUpperASCII(prefixUpper);
-  const size_t prefixLen = strLen(prefixUpper);
+  const size_t prefixLen = strlen(prefixUpper);
 
   Result res;
   initResult(&res);
 
   processInput(prefixUpper, prefixLen, &res);
 
-  printFinalOutput(&res, prefixUpper);
+  showResult(&res, prefixUpper);
 
   return EXIT_SUCCESS;
 }

@@ -1,0 +1,8 @@
+{
+    "cmake.ignoreCMakeListsMissing": true,
+    "files.associations": {
+        "*.embeddedhtml": "html",
+        "*.html": "html",
+        "ctype.h": "c"
+    }
+}

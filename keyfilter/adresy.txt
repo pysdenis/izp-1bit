@@ -4,3 +4,6 @@ Bruntal
 Bratislava
 Ostrava
 Ostrava Mesto
+BRNO-Mesto
+Mlada Boleslav
+Mlada
