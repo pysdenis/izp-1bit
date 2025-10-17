@@ -11,7 +11,7 @@
 #include <string.h>
 
 #define LINE_BUFFER_SIZE 2048
-
+#define ASCII_CHARS 256
 #define TRUE 1
 #define FALSE 0
 typedef int bool;
@@ -20,7 +20,7 @@ typedef int bool;
 typedef struct {
   unsigned long matchCount;           /* number of matching addresses   */
   bool exactMatch;                    /* exact == prefix exists         */
-  char nextChars[256];                /* set of next allowed characters */
+  char nextChars[ASCII_CHARS];        /* set of next allowed characters */
   char singleMatch[LINE_BUFFER_SIZE]; /* the only match (if 1)     */
 } Result;
 
@@ -31,7 +31,7 @@ typedef struct {
 void initResult(Result* result) {
   result->matchCount = 0;
   result->exactMatch = FALSE;
-  for (int i = 0; i < 256; i++) {
+  for (int i = 0; i < ASCII_CHARS; i++) {
     result->nextChars[i] = 0;
   };
   result->singleMatch[0] = '\0';
@@ -100,9 +100,9 @@ void updateResult(Result* result, const char* upperLine, size_t lineLen,
  * @param charTable
  * @param output Output string to store enabled characters.
  */
-void buildEnableChars(const char charTable[256], char output[257]) {
+void buildEnableChars(const char charTable[ASCII_CHARS], char output[257]) {
   size_t k = 0;
-  for (int i = 0; i < 256; i++)
+  for (int i = 0; i < ASCII_CHARS; i++)
     if (charTable[i]) output[k++] = (char)i;
   output[k] = '\0';
 }
@@ -143,7 +143,7 @@ bool readLine(char* buffer, size_t maxLen) {
  */
 void processInput(const char* prefixUpper, size_t prefixLen, Result* res) {
   char line[LINE_BUFFER_SIZE];
-  char up[LINE_BUFFER_SIZE];
+  char up[LINE_BUFFER_SIZE];  // uppercase copy of line
 
   while (readLine(line, LINE_BUFFER_SIZE)) {
     if (line[0] == '\0') continue;  // skip empty lines
